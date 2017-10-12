@@ -1,0 +1,189 @@
+- hosts: all
+  become: yes
+  vars:
+    java_packages: java-1.8.0-openjdk # newer Jenkins don't work with older versions
+    jenkins_plugins:
+    - git                   # Git Plugin
+    - multiple-scms         # Multiple SCMs Plugin
+    - tap                   # Tap Plugin
+    - conditional-buildstep # Conditional BuildStep Plugin
+    - workflow-aggregator   # Pipeline Plugin
+    - parameterized-trigger # Parameterized Trigger Plugin
+    sat6:
+      fqdn: sat6.soeci.example.com
+      org: Default
+      env: Library
+      cv:
+        rhel6: cv-rhel6-base
+        rhel7: cv-rhel7-base
+  vars_files:
+    - credentials.local.cfg # copy and adapt from credentials.template.cfg
+
+  pre_tasks:
+
+  - name: Fail if no Red Hat Subscription Manager authentication data is passed
+    fail: msg="You must pass authentication data to this role."
+    when: "( rhn_user is not defined or rhn_pass is not defined ) and rhn_activation_key is not defined and rhn_pool_ids is not defined" 
+
+  - name: Fail if OS is not RHEL
+    assert: { that: "ansible_distribution == 'RedHat'" } 
+
+  - name: Fail if OS is not RHEL 7 (or higher)
+    assert: { that: "ansible_distribution_version >= 7.0" } 
+
+  - name: make sure SELinux is enforced (fix for default RHEL box)
+    selinux:
+      policy: targeted
+      state: enforcing
+
+  ## NOTE: this only works if your version of ansible includes
+  ## https://github.com/ansible/ansible-modules-core/pull/1204 
+  ## which was merged 2015-08-24. If your version of Ansible is older, you'll need to
+  ## identify your subscription pool ids and pass those to the role instead. 
+  ## It also doesn't work well if too many subscriptions match the same pattern
+  - name: Enable RHEL subscription via username/password
+    redhat_subscription: 
+      state: present 
+      username: "{{ rhn_user }}"
+      password: "{{ rhn_pass }}"
+      pool: "{{ rhn_pool_pattern | default('.*Red Hat Enterprise Linux.*') }}"
+    when: rhn_user is defined and rhn_pass is defined
+
+  - name: Enable RHEL subscription via activation key
+    redhat_subscription: 
+      state: present 
+      activationkey: "{{ rhn_activationkey }}"
+      pool: "{{ rhn_pool_pattern | default('.*Red Hat Enterprise Linux.*') }}"
+    when: rhn_activation_key is defined
+
+  - name: Check which pool IDs are already consumed
+    command: subscription-manager list --pool-only --consumed
+    register: consumed_pool_ids
+    changed_when: false
+
+  - name: Add subs by pool id if your version of Ansible has a buggy redhat_subscription module
+    command: "subscription-manager subscribe --pool={{ item }}"
+    with_items: "{{ jenkins_rhn_pool_ids | default([])}}"
+    when: item not in consumed_pool_ids.stdout_lines
+
+  ## FIXME: these 2 tasks together shouldn't change the end-state, but neither is idempotent
+  - name: Reset enabled yum/rhn distros
+    command: subscription-manager repos --disable "*"
+    ignore_errors: true
+  - name: Only enable required yum/rhn distros
+    command: >
+      subscription-manager repos
+      --enable rhel-{{ ansible_distribution_major_version }}-server-rpms
+      --enable rhel-server-rhscl-{{ ansible_distribution_major_version }}-rpms
+      --enable rhel-{{ ansible_distribution_major_version }}-server-satellite-tools-6.2-rpms
+      --enable rhel-{{ ansible_distribution_major_version }}-server-optional-rpms
+      --enable rhel-{{ ansible_distribution_major_version }}-server-extras-rpms
+
+  - name: upgrade all the RPMs to their latest version (recommmended)
+    yum: name='*' state='latest'
+
+  - name: open port 8080 in the firewall
+    firewalld:
+      port: 8080/tcp
+      permanent: yes
+      state: enabled
+
+  roles:
+  - jenkins-server
+
+  post_tasks: # mostly the tasks really relevant to SOE-CI and not only to Jenkins
+
+  - name: enable EPEL repository for SOE-CI (mock, etc)
+    yum:
+      name: https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+      state: present
+
+  - name: install necessary packages for SOE-CI
+    yum:
+      name: '{{ item }}'
+      state: 'latest'
+    with_items:
+    - httpd
+    - mock
+    - createrepo
+    - git
+    - nc
+    - puppet
+    # dependencies of module jenkins_job (for RHEL7, Fedora expects python2-...)
+    - python-jenkins
+    - python-lxml
+
+  - name: enable and start the httpd service
+    service:
+      name: httpd
+      enabled: yes
+      state: started
+
+  - name: open HTTP(S) service ports in the firewall
+    firewalld:
+      service: "{{ item }}"
+      permanent: yes
+      state: enabled
+    with_items:
+    - http
+    - https
+
+  - name: grab the SSL key ID from the Jenkins server
+    shell: >
+      awk -F' *[/=] *' '$1 == "sslclientcert" { sub(".pem","",$NF); print $NF}'
+      /etc/yum.repos.d/redhat.repo | sort -u
+    register: sslkey_out
+    changed_when: false
+
+  - name: set a fact with the SSL key ID
+    set_fact:
+      mock_ssl_key_id: "{{ sslkey_out.stdout }}"
+
+  - name: copy the mock files replacing the specific variables
+    template:
+      dest: /etc/mock/{{ item }}
+      src: templates/{{ item }}.j2
+    with_items:
+    - rhel-6-x86_64.cfg
+    - rhel-7-x86_64.cfg
+
+# TODO * Select 'Configure System'
+#     * Enable 'Environment variables' in the Global properties section and click save
+#     (there is no need to Add any). Failing to enable this property leads to
+#     https://github.com/RedHatSatellite/soe-ci/issues/48
+# * Restart Jenkins
+
+  - name: add the Jenkins user to the mock group and create SSH keys
+    user:
+      append: yes
+      name: jenkins
+      groups: mock
+      generate_ssh_key: yes
+  - name: create content repositories
+    file:
+      dest: "/var/www/html/pub/{{ item }}"
+      state: directory
+      owner: jenkins
+    with_items:
+    - soe-repo   # for RPMs
+    - soe-puppet
+    - soe-puppet-only
+
+# Currently fails with "msg": "python-jenkins required for this module.
+# see http://python-jenkins.readthedocs.io/en/latest/install.html"
+#  - name: create a Jenkins Pipeline job for SOE-CI
+#    jenkins_job:
+#      name: soe-ci-pipeline
+#      config: "{{ lookup('file','../config-jenkinsfile.xml') }}"
+#      user: admin
+#      password: admin
+#
+#  - name: create a Jenkins SCM polling job for SOE-CI
+#    jenkins_job:
+#      name: soe-ci-poll-scm
+#      config: "{{ lookup('file','../config.xml') }}"
+#      user: admin
+#      password: admin
+
+### Git Repository ## TODO need to continue implementing from the README.md file...
+
