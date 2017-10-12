@@ -1,0 +1,11 @@
+- hosts: all
+  become: yes
+  vars_files:
+    - credentials.local.cfg
+  pre_tasks:
+    - name: make sure SELinux is enforced (fix for default RHEL box)
+      selinux:
+        policy: targeted
+        state: enforcing
+  roles:
+    - satellite6-server

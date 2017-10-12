@@ -1,0 +1,51 @@
+config_opts['root'] = 'rhel-7-x86_64'
+config_opts['target_arch'] = 'x86_64'
+config_opts['legal_host_arches'] = ('x86_64',)
+config_opts['chroot_setup_cmd'] = 'install bash bzip2 cpio diffutils gcc gcc-c++ gzip make patch perl rpm-build sed shadow-utils tar unzip which'
+config_opts['dist'] = 'el7'  # only useful for --resultdir variable subst
+config_opts['releasever'] = '7Server'
+config_opts['use_nspawn'] = False
+
+config_opts['yum.conf'] = """
+[main]
+cachedir=/var/cache/yum
+debuglevel=1
+reposdir=/dev/null
+logfile=/var/log/yum.log
+retries=20
+obsoletes=1
+gpgcheck=0
+assumeyes=1
+syslog_ident=mock
+syslog_device=
+
+# repos
+[rhel-7-server-rpms]
+metadata_expire = 1
+sslclientcert = /etc/pki/entitlement/{{ mock_ssl_key_id }}.pem
+baseurl = https://{{ sat6.fqdn }}/pulp/repos/{{ sat6.org }}/{{ sat6.env }}/{{ sat6.cv.rhel7 }}/content/dist/rhel/server/7/7Server/$basearch/os
+ui_repoid_vars = basearch
+sslverify = 1
+name = Red Hat Enterprise Linux 7 Server (RPMs)
+sslclientkey = /etc/pki/entitlement/{{ mock_ssl_key_id }}-key.pem
+gpgkey = file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+enabled = 1
+sslcacert = /etc/rhsm/ca/katello-server-ca.pem
+gpgcheck = 1
+
+
+[epel]
+metadata_expire = 1
+sslclientcert = /etc/pki/entitlement/{{ mock_ssl_key_id }}.pem
+baseurl = https://{{ sat6.fqdn }}/pulp/repos/ORG/ENV/CONTENT_VIEW/custom/EPEL/EPEL_7
+sslverify = 1
+name = EPEL 7
+sslclientkey = /etc/pki/entitlement/{{ mock_ssl_key_id }}-key.pem
+gpgkey = https://{{ sat6.fqdn }}/katello/api/repositories/13/gpg_key_content
+enabled = 1
+sslcacert = /etc/rhsm/ca/katello-server-ca.pem
+gpgcheck = 1
+
+
+"""
+

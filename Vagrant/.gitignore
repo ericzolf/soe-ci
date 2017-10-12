@@ -1,0 +1,4 @@
+*.retry
+*.local.*
+roles/*/
+.vagrant

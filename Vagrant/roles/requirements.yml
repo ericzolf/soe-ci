@@ -1,0 +1,6 @@
+---
+- src: geerlingguy.jenkins
+  name: jenkins-server
+- src: https://github.com/ericzolf/role-satellite6-server
+  version: ericzolf-sat62
+  name: satellite6-server
