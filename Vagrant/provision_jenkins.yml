@@ -171,19 +171,25 @@
 
 # Currently fails with "msg": "python-jenkins required for this module.
 # see http://python-jenkins.readthedocs.io/en/latest/install.html"
-#  - name: create a Jenkins Pipeline job for SOE-CI
-#    jenkins_job:
-#      name: soe-ci-pipeline
-#      config: "{{ lookup('file','../config-jenkinsfile.xml') }}"
-#      user: admin
-#      password: admin
-#
-#  - name: create a Jenkins SCM polling job for SOE-CI
-#    jenkins_job:
-#      name: soe-ci-poll-scm
-#      config: "{{ lookup('file','../config.xml') }}"
-#      user: admin
-#      password: admin
+  - name: create a Jenkins Pipeline job for SOE-CI
+    jenkins_job:
+      name: soe-ci-pipeline
+      config: "{{ lookup('file','../config-jenkinsfile.xml') }}"
+      user: admin
+      password: admin
+      url: http://{{ ansible_default_ipv4.address }}:8080/
+    delegate_to: localhost
+    become: no
+
+  - name: create a Jenkins SCM polling job for SOE-CI
+    jenkins_job:
+      name: soe-ci-poll-scm
+      config: "{{ lookup('file','../config.xml') }}"
+      user: admin
+      password: admin
+      url: http://{{ ansible_default_ipv4.address }}:8080/
+    delegate_to: localhost
+    become: no
 
 ### Git Repository ## TODO need to continue implementing from the README.md file...
 
